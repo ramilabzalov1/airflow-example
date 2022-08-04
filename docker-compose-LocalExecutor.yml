@@ -1,0 +1,56 @@
+version: '3.8'
+services:
+    postgres:
+        image: postgres:12
+        env_file:
+            - "config/.env"
+        volumes:
+            - './volumes/pg_data:/var/lib/postgresql/data'
+        logging:
+            options:
+                max-size: 10m
+                max-file: "3"
+
+    webserver:
+        build:
+            dockerfile: Dockerfile
+            context: .
+            args:
+                PYTHON_DEPS: airflow-clickhouse-plugin[pandas] fsspec
+
+        restart: always
+        depends_on:
+            - postgres
+        env_file:
+            - 'config/.env'
+        environment:
+            - LOAD_EX=n
+            - EXECUTOR=Local
+        logging:
+            options:
+                max-size: 10m
+                max-file: "3"
+        volumes:
+            - ./dags:/usr/local/airflow/dags
+        ports:
+            - "8080:8080"
+        command: webserver
+        healthcheck:
+            test: ["CMD-SHELL", "[ -f /usr/local/airflow/airflow-webserver.pid ]"]
+            interval: 30s
+            timeout: 30s
+            retries: 3
+
+    clickhouse:
+        image: clickhouse/clickhouse-server:22.3
+        env_file:
+            - "config/.env"
+        volumes:
+            - "./volumes/ch_data:/var/lib/clickhouse/"
+        ports:
+            - "8123:8123"
+            - "9000:9000"
+        logging:
+            options:
+                max-size: 10m
+                max-file: "3"
