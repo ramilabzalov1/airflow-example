@@ -19,7 +19,7 @@ LOCAL_PATH = os.environ.get('AIRFLOW_HOME')
     start_date=datetime.datetime.now(),
     schedule_interval='0 2 * * *',
 )
-def info_oil_fuels_etl():
+def example_etl_dag():
 
     @task(task_id='extract')
     def extract():
@@ -71,10 +71,7 @@ def info_oil_fuels_etl():
         database='airflow',
     )
 
-    create_tables >> transform(extract())
-    create_tables >> load
-
-
+    create_tables >> transform(extract()) >> load
 
 
 dag = info_oil_fuels_etl()
