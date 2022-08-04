@@ -74,4 +74,4 @@ def example_etl_dag():
     create_tables >> transform(extract()) >> load
 
 
-dag = info_oil_fuels_etl()
+dag = example_etl_dag()
