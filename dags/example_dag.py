@@ -1,14 +1,13 @@
 import datetime
 import os
-import re
-from io import StringIO
 
-import numpy as np
 import pandas as pd
 from airflow.decorators import dag, task
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow_clickhouse_plugin.operators.clickhouse_operator import \
     ClickHouseOperator
 from clickhouse import tables
+from clickhouse.converters import get_count_days
 
 LOCAL_PATH = os.environ.get('AIRFLOW_HOME')
 
@@ -21,57 +20,50 @@ LOCAL_PATH = os.environ.get('AIRFLOW_HOME')
 )
 def example_etl_dag():
 
-    @task(task_id='extract')
-    def extract():
-        with open(f'{LOCAL_PATH}/dags/data/bfro_reports.json', 'rb') as file:
-            data = file.read()
-            return data.decode('utf-8')
+    @task(task_id='extract_orders_1')
+    def extract_orders():
+        postgres_hook = PostgresHook(postgres_conn_id='postgres_connection_1')
+        return postgres_hook.get_records("SELECT * FROM orders;")
 
-    @task(task_id='transform')
-    def transform(reports):
-        def apply_normalize_year(row):
-            numbers_regex = '[0-9]{4}'
-            numbers = re.findall(numbers_regex, row)
-            return numbers[0] if numbers else '0'
+    @task(task_id='extract_customers_1')
+    def extract_customers():
+        postgres_hook = PostgresHook(postgres_conn_id='postgres_connection_1')
+        return postgres_hook.get_records("SELECT * FROM customers;")
 
-        def apply_normalize_id(row):
-            try:
-                 int(row)
-            except ValueError:
-                return np.NAN
-            return row
+    @task(task_id='transform_1')
+    def transform(orders, customers):
 
-        df = pd.read_json(StringIO(reports), orient='records', dtype=str, lines=True)
-
-        df['YEAR'] = df['YEAR'].apply(apply_normalize_year)
-        df['REPORT_NUMBER'] = df['REPORT_NUMBER'].apply(apply_normalize_id)
-        df.drop(
-            columns=['OBSERVED', 'ALSO_NOTICED', 'OTHER_WITNESSES', 'OTHER_STORIES',
-                     'LOCATION_DETAILS', 'A_&_G_References', 'ENVIRONMENT', 'TIME_AND_CONDITIONS'],
-            inplace=True,
+        orders_df = pd.DataFrame.from_records(orders)
+        orders_df.columns = (
+            'order_id', 'customer_id', 'order_total_usd', 'make', 'model', 'delivery_city',
+            'delivery_company', 'delivery_address', 'created_at',
         )
-        df.replace(' ', '', regex=True, inplace=True)
-        df.replace("'", '', regex=True, inplace=True)
-        # print('DF: \n' + df.to_string())
-        df.dropna(subset=('REPORT_NUMBER', ), inplace=True)
-        df.fillna('', inplace=True)
-        return ','.join(map(str, df.to_records(index=False).tolist()))
+
+        customers_df = pd.DataFrame.from_records(customers)
+        customers_df.columns = ('customer_id', 'customer_name')
+
+        df_to_load = orders_df.merge(customers_df, on='customer_id')
+        df_to_load['created_at'] = df_to_load['created_at'].apply(get_count_days)
+        df_to_load.replace("'", "", inplace=True, regex=True)
+
+        return ','.join(map(str, df_to_load.to_records(index=False).tolist()))
 
     create_tables = ClickHouseOperator(
-        task_id='create_tables',
+        task_id='ch_create_tables_1',
         clickhouse_conn_id='clickhouse_connection_1',
-        sql=tables.CREATE_BFRO_TABLE,
+        sql=tables.CH_CREATE_ORDER_TABLE,
         database='airflow',
     )
 
     load = ClickHouseOperator(
-        task_id='load',
+        task_id='ch_load_datamart_1',
         clickhouse_conn_id='clickhouse_connection_1',
-        sql="INSERT INTO BFRO(* EXCEPT(timestamp)) VALUES {{ ti.xcom_pull(task_ids='transform', key='return_value') }}",
+        sql="INSERT INTO orders_datamart(* EXCEPT(timestamp)) "
+            "VALUES {{ ti.xcom_pull(task_ids='transform_1', key='return_value') }}",
         database='airflow',
     )
 
-    create_tables >> transform(extract()) >> load
+    create_tables >> transform(extract_orders(), extract_customers()) >> load
 
 
 dag = example_etl_dag()

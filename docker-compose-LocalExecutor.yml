@@ -6,6 +6,8 @@ services:
             - "config/.env"
         volumes:
             - './volumes/pg_data:/var/lib/postgresql/data'
+        ports:
+            - "5433:5432"
         logging:
             options:
                 max-size: 10m
@@ -16,7 +18,7 @@ services:
             dockerfile: Dockerfile
             context: .
             args:
-                PYTHON_DEPS: airflow-clickhouse-plugin[pandas] fsspec
+                PYTHON_DEPS: airflow-clickhouse-plugin[pandas] fsspec importlib-metadata==4.13.0
 
         restart: always
         depends_on:
